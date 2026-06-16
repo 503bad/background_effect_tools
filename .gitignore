@@ -1,0 +1,22 @@
+build_*/
+build_log.txt
+.deps/
+.cache/
+.vs/
+.vscode/
+vcpkg_installed/
+CMakeUserPresets.json
+*.user
+
+# Generated install payload. build.bat wipes and restages this whole tree on
+# every run (cmake --install ... --component dist --prefix package), including
+# the bundled README.md / LICENSE / SOURCE-NOTICE.txt, so nothing in it is
+# hand-maintained.
+/package/
+
+# Release staging / distributable archives (attached to GitHub Releases, not tracked).
+/release/
+*.dll
+*.pdb
+*.exp
+*.lib

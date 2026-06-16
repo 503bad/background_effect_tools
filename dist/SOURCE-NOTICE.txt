@@ -1,0 +1,12 @@
+Background Effect Tools - OBS Studio source plugin
+
+This distribution contains a binary build of the Background Effect Tools
+plugin. The plugin is licensed under the GNU General Public License,
+version 2 (see the bundled LICENSE file).
+
+The complete corresponding source code is available from the project
+repository. If you received this binary without source access, contact
+the distributor listed in the plugin metadata.
+
+Third-party components:
+  - Built against libobs (OBS Studio), GPL-2.0.

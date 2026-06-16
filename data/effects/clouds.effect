@@ -1,0 +1,118 @@
+/* Cloud field: animated fbm noise mixing two colours, with independent
+ * scroll, morph speed, contrast/softness controls and a multiplied
+ * directional gradient. Drawn as a full-canvas sprite (no input texture).
+ * Output is premultiplied alpha. */
+
+uniform float4x4 ViewProj;
+
+uniform float2 canvas;      /* canvas size in px            */
+uniform float  time;
+uniform float4 color_a;
+uniform float4 color_b;
+uniform float  opacity;
+uniform float  morph;       /* shape-change speed            */
+uniform float2 scroll;      /* px/s                          */
+uniform float  noise_scale; /* pattern frequency             */
+uniform float  contrast;    /* 0..1 mix hardness             */
+uniform float  softness;    /* 0..1 mottle edge softness     */
+uniform float  glow;
+uniform float  bloom;
+uniform float4 grad_color;
+uniform float  grad_angle;  /* degrees                       */
+uniform float  grad_strength;
+
+struct VertData {
+	float4 pos : POSITION;
+	float2 uv  : TEXCOORD0;
+};
+
+VertData VSDefault(VertData v)
+{
+	VertData o;
+	o.pos = mul(float4(v.pos.xyz, 1.0), ViewProj);
+	o.uv = v.uv;
+	return o;
+}
+
+float hash21(float2 p)
+{
+	return frac(sin(dot(p, float2(127.1, 311.7))) * 43758.5453);
+}
+
+float vnoise(float2 p)
+{
+	float2 i = floor(p);
+	float2 f = frac(p);
+	float2 u = f * f * (3.0 - 2.0 * f);
+	float a = hash21(i);
+	float b = hash21(i + float2(1.0, 0.0));
+	float c = hash21(i + float2(0.0, 1.0));
+	float d = hash21(i + float2(1.0, 1.0));
+	return lerp(lerp(a, b, u.x), lerp(c, d, u.x), u.y);
+}
+
+/* fbm whose octaves drift at slightly different speeds, so the pattern
+ * morphs rather than translating rigidly. */
+float fbm5(float2 p, float t)
+{
+	float f = 0.0;
+	f += 0.5000 * vnoise(p + float2(t * 0.30, t * 0.17));
+	p = p * 2.02 + float2(13.7, 7.1);
+	f += 0.2500 * vnoise(p - float2(t * 0.23, t * 0.31));
+	p = p * 1.99 + float2(5.3, 9.2);
+	f += 0.1250 * vnoise(p + float2(t * 0.41, -t * 0.13));
+	p = p * 2.01 + float2(1.9, 3.4);
+	f += 0.0625 * vnoise(p - float2(-t * 0.19, t * 0.37));
+	p = p * 1.98 + float2(8.4, 2.6);
+	f += 0.03125 * vnoise(p + float2(t * 0.27, t * 0.23));
+	return f / 0.96875;
+}
+
+float4 PSClouds(VertData v) : TARGET
+{
+	float aspect = canvas.x / max(canvas.y, 1.0);
+
+	/* Scroll in screen px, then scale into noise space. */
+	float2 uv = v.uv - scroll * time / max(canvas, float2(1.0, 1.0));
+	float2 q = uv * float2(aspect, 1.0) * noise_scale;
+
+	float t = time * morph;
+
+	/* Light domain warp gives the billows their curl. */
+	float2 warp = float2(vnoise(q * 1.7 + t * 0.12),
+			     vnoise(q * 1.7 + 7.7 - t * 0.15));
+	float f = fbm5(q + (warp - 0.5) * 0.8, t);
+
+	/* Two-colour mottle with adjustable hardness and edge softness. */
+	float half_w = clamp(lerp(0.45, 0.06, contrast) *
+				     (0.35 + 1.3 * softness),
+			     0.01, 0.5);
+	float m = smoothstep(0.5 - half_w, 0.5 + half_w, f);
+
+	float3 col = lerp(color_a.rgb, color_b.rgb, m);
+
+	/* Glow lifts the field's own bright parts; bloom adds a softer,
+	 * whiter light spill over dense areas. */
+	float bright = pow(saturate((f - 0.55) / 0.45), 2.0);
+	col += col * glow * bright * 1.3;
+	col += bloom * pow(f, 2.0) * 0.45;
+
+	/* Multiplied directional gradient (e.g. brighter below, darker above). */
+	float rad = grad_angle * 0.017453292;
+	float2 dir = float2(cos(rad), -sin(rad));
+	float gpos = saturate(dot(v.uv - 0.5, dir) + 0.5);
+	col *= lerp(float3(1.0, 1.0, 1.0), grad_color.rgb * 2.0,
+		    grad_strength * gpos);
+
+	float a = opacity;
+	return float4(col * a, a);
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v);
+		pixel_shader  = PSClouds(v);
+	}
+}

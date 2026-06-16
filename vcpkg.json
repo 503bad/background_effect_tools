@@ -1,0 +1,6 @@
+{
+  "name": "background-effect-tools",
+  "version-string": "0.1.0",
+  "description": "Background Effect Tools - OBS source plugin: animated background effects (smoke, embers, sparks, clouds, sparkles, gravity particles, flame)",
+  "dependencies": []
+}

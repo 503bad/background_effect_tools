@@ -1,0 +1,33 @@
+/* Flat vertex-colour shader for the audio visualizer geometry (spectrum bars,
+ * rings, waveform). Each vertex carries a premultiplied-alpha COLOR; the host
+ * draws with GS_BLEND_ONE / GS_BLEND_INVSRCALPHA so the output composites over
+ * any background. No texture, no shape — just the interpolated colour. */
+
+uniform float4x4 ViewProj;
+
+struct VertData {
+	float4 pos   : POSITION;
+	float4 color : COLOR;
+};
+
+VertData VSColor(VertData v)
+{
+	VertData o;
+	o.pos = mul(float4(v.pos.xyz, 1.0), ViewProj);
+	o.color = v.color;
+	return o;
+}
+
+float4 PSColor(VertData v) : TARGET
+{
+	return v.color;
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSColor(v);
+		pixel_shader  = PSColor(v);
+	}
+}

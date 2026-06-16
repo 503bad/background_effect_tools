@@ -1,0 +1,151 @@
+/* Generic billboard sprite shader for the background particle effects.
+ * Each quad carries a per-vertex COLOR and TEXCOORD1 = (seed, age 0..1).
+ * `shape` selects a procedural shape; the post uniforms add light:
+ *   glow     - soft halo hugging the particle
+ *   bloom    - wide light spill behind it
+ *   emissive - core brightness boost
+ *   flare    - anamorphic streak + weak vertical cross
+ * The quad is drawn `quad_scale` times larger than the particle core so the
+ * halos and streaks have room. Output is premultiplied alpha. */
+
+uniform float4x4 ViewProj;
+
+uniform float shape;      /* 0 soft 1 circle 2 cross 3 star 4 puff */
+uniform float glow;
+uniform float bloom;
+uniform float emissive;
+uniform float flare;
+uniform float quad_scale; /* uv→core mapping factor */
+
+struct VertData {
+	float4 pos   : POSITION;
+	float2 uv    : TEXCOORD0;
+	float2 dat   : TEXCOORD1; /* (seed, age) */
+	float4 color : COLOR;
+};
+
+VertData VSDefault(VertData v)
+{
+	VertData o;
+	o.pos = mul(float4(v.pos.xyz, 1.0), ViewProj);
+	o.uv = v.uv;
+	o.dat = v.dat;
+	o.color = v.color;
+	return o;
+}
+
+float hash21(float2 p)
+{
+	return frac(sin(dot(p, float2(127.1, 311.7))) * 43758.5453);
+}
+
+float vnoise(float2 p)
+{
+	float2 i = floor(p);
+	float2 f = frac(p);
+	float2 u = f * f * (3.0 - 2.0 * f);
+	float a = hash21(i);
+	float b = hash21(i + float2(1.0, 0.0));
+	float c = hash21(i + float2(0.0, 1.0));
+	float d = hash21(i + float2(1.0, 1.0));
+	return lerp(lerp(a, b, u.x), lerp(c, d, u.x), u.y);
+}
+
+float fbm4(float2 p)
+{
+	float f = 0.0;
+	f += 0.5000 * vnoise(p);
+	p *= 2.03;
+	f += 0.2500 * vnoise(p);
+	p *= 2.01;
+	f += 0.1250 * vnoise(p);
+	p *= 1.97;
+	f += 0.0625 * vnoise(p);
+	return f / 0.9375;
+}
+
+/* iq: 5-point star signed distance. */
+float sdStar5(float2 p, float r, float rf)
+{
+	const float2 k1 = float2(0.809016994375, -0.587785252292);
+	const float2 k2 = float2(-k1.x, k1.y);
+	p.x = abs(p.x);
+	p -= 2.0 * max(dot(k1, p), 0.0) * k1;
+	p -= 2.0 * max(dot(k2, p), 0.0) * k2;
+	p.x = abs(p.x);
+	p.y -= r;
+	float2 ba = rf * float2(-k1.y, k1.x) - float2(0.0, 1.0);
+	float h = clamp(dot(p, ba) / dot(ba, ba), 0.0, r);
+	return length(p - ba * h) * sign(p.y * ba.x - p.x * ba.y);
+}
+
+float4 PSSprite(VertData v) : TARGET
+{
+	/* p in core units: the particle core fits roughly |p| < 0.5. */
+	float2 p = (v.uv - 0.5) * quad_scale;
+	float seed = v.dat.x;
+	int sh = (int)(shape + 0.5);
+
+	float fill;
+	if (sh == 0) {
+		float d = length(p) * 2.0;
+		fill = saturate(1.0 - d);
+		fill *= fill;
+	} else if (sh == 1) {
+		float sd = length(p) - 0.34;
+		float aa = max(fwidth(sd), 1e-4);
+		fill = smoothstep(aa, -aa, sd);
+	} else if (sh == 2) {
+		/* Cross-filter sparkle: two thin perpendicular lobes plus a
+		 * hot middle. */
+		float lh = saturate(1.0 - abs(p.x) * 1.6) *
+			   pow(saturate(1.0 - abs(p.y) * 9.0), 2.0);
+		float lv = saturate(1.0 - abs(p.y) * 1.6) *
+			   pow(saturate(1.0 - abs(p.x) * 9.0), 2.0);
+		float core = pow(saturate(1.0 - length(p) * 3.0), 2.0);
+		fill = saturate(lh + lv + core);
+	} else if (sh == 3) {
+		float sd = sdStar5(p, 0.40, 0.45);
+		float aa = max(fwidth(sd), 1e-4);
+		fill = smoothstep(aa, -aa, sd);
+	} else {
+		/* Smoke puff: a soft disc eroded by fbm so every puff has its
+		 * own ragged silhouette. */
+		float base = saturate(1.0 - length(p) * 2.0);
+		float n = fbm4(p * 3.5 + seed * 37.0);
+		fill = saturate(base * 1.45 - n * 0.62);
+		fill = fill * fill * (3.0 - 2.0 * fill);
+	}
+
+	/* Halos: glow hugs the body, bloom spills wide. */
+	float d = length(p);
+	float ghalo = pow(saturate(1.0 - d * 1.7), 2.0);
+	float halo = pow(saturate(1.0 - d / 1.15), 3.0);
+
+	/* Anamorphic streak (horizontal) plus a weaker vertical cross. */
+	float ext = quad_scale * 0.5;
+	float sh_h = pow(saturate(1.0 - abs(p.y) * 6.0), 3.0) *
+		     pow(saturate(1.0 - abs(p.x) / ext), 1.5);
+	float sh_v = pow(saturate(1.0 - abs(p.x) * 6.0), 3.0) *
+		     pow(saturate(1.0 - abs(p.y) / ext), 1.5);
+	float streak = flare * (sh_h + 0.5 * sh_v);
+
+	float a = fill * v.color.a;
+	float lightA = (ghalo * glow * 0.6 + halo * bloom * 0.5 +
+			streak * 0.8) * v.color.a;
+
+	float3 rgb = v.color.rgb * (1.0 + emissive * 2.0) * a +
+		     v.color.rgb * (ghalo * glow * 1.2 + halo * bloom * 1.2 +
+				    streak * 1.5) * v.color.a;
+	float outA = saturate(a + lightA);
+	return float4(rgb, outA);
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v);
+		pixel_shader  = PSSprite(v);
+	}
+}
