@@ -1,0 +1,2 @@
+# background_effect_tools
+OBS背景エフェクト用プラグイン
