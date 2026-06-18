@@ -84,7 +84,7 @@ float4 PSSprite(VertData v) : TARGET
 	/* p in core units: the particle core fits roughly |p| < 0.5. */
 	float2 p = (v.uv - 0.5) * quad_scale;
 	float seed = v.dat.x;
-	int sh = (int)(shape + 0.5);
+	int sh = int(shape + 0.5);
 
 	float fill;
 	if (sh == 0) {
