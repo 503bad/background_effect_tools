@@ -946,6 +946,7 @@ static void tick_twinkle(struct audioviz_state *s, const struct bg_ctx *ctx,
 	float w = (float)ctx->width, h = (float)ctx->height;
 	const struct viz_drive *d = &s->dr;
 	int n = s->tw_count;
+	UNUSED_PARAMETER(dt);
 	if (n > (int)live_cap(s))
 		n = (int)live_cap(s);
 

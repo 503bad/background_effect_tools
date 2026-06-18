@@ -89,3 +89,34 @@ install(
   DESTINATION .
   COMPONENT dist
 )
+
+# --- macOS distribution layout (package_mac/) ------------------------------
+# On macOS the plugin ships as a self-contained .plugin bundle (binary +
+# effects + locale). Stage everything needed for distribution under
+# package_mac/ automatically at the end of every build:
+#
+#   package_mac/
+#   ├─ background-effect-tools.plugin/   (drop into OBS plugins folder)
+#   ├─ README.md
+#   ├─ LICENSE
+#   └─ SOURCE-NOTICE.txt
+if(APPLE)
+  set(_pkg_mac_dir "${CMAKE_CURRENT_SOURCE_DIR}/package_mac")
+  add_custom_command(
+    TARGET ${CMAKE_PROJECT_NAME}
+    POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E rm -rf
+      "${_pkg_mac_dir}/$<TARGET_BUNDLE_DIR_NAME:${CMAKE_PROJECT_NAME}>"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${_pkg_mac_dir}"
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory
+      "$<TARGET_BUNDLE_DIR:${CMAKE_PROJECT_NAME}>"
+      "${_pkg_mac_dir}/$<TARGET_BUNDLE_DIR_NAME:${CMAKE_PROJECT_NAME}>"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+      "${CMAKE_CURRENT_SOURCE_DIR}/README.md"
+      "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
+      "${CMAKE_CURRENT_SOURCE_DIR}/dist/SOURCE-NOTICE.txt"
+      "${_pkg_mac_dir}"
+    COMMENT "Stage macOS distribution into package_mac/"
+    VERBATIM
+  )
+endif()

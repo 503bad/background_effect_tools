@@ -14,6 +14,11 @@ CMakeUserPresets.json
 # hand-maintained.
 /package/
 
+# Generated macOS distribution payload. The macOS build restages this whole
+# tree on every build (POST_BUILD copy of the .plugin bundle + docs), so
+# nothing in it is hand-maintained.
+/package_mac/
+
 # Release staging / distributable archives (attached to GitHub Releases, not tracked).
 /release/
 *.dll
