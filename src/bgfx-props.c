@@ -12,6 +12,37 @@ void bg_unpack_color(uint32_t c, float rgba[4])
 	rgba[3] = (float)((c >> 24) & 0xFF) / 255.0f;
 }
 
+float bg_fft_band(const struct bg_audio_fft *fft, float lo_hz, float hi_hz)
+{
+	if (!fft || !fft->valid || fft->bar_count <= 0)
+		return 0.0f;
+	float fmin = fft->freq_min, fmax = fft->freq_max;
+	if (fmin <= 0.0f || fmax <= fmin)
+		return 0.0f;
+	if (hi_hz < lo_hz) {
+		float t = lo_hz;
+		lo_hz = hi_hz;
+		hi_hz = t;
+	}
+	int N = fft->bar_count;
+	float lr = logf(fmax / fmin);
+	/* Map each edge to a fractional bar index, then clamp into range. */
+	float bf_lo = logf((lo_hz < fmin ? fmin : lo_hz) / fmin) / lr * N;
+	float bf_hi = logf((hi_hz > fmax ? fmax : hi_hz) / fmin) / lr * N;
+	int b0 = (int)bf_lo;
+	int b1 = (int)bf_hi;
+	if (b0 < 0)
+		b0 = 0;
+	if (b1 >= N)
+		b1 = N - 1;
+	if (b1 < b0)
+		b1 = b0;
+	float sum = 0.0f;
+	for (int b = b0; b <= b1; ++b)
+		sum += fft->bars[b];
+	return sum / (float)(b1 - b0 + 1);
+}
+
 /* ---- common particle parameters ------------------------------------------ */
 
 void bg_common_props(obs_properties_t *g, const char *pre,
@@ -22,7 +53,8 @@ void bg_common_props(obs_properties_t *g, const char *pre,
 		obs_module_text("Size"), spec->size_min, spec->size_max,
 		spec->size_step);
 	obs_properties_add_int_slider(g, bg_key(k, sizeof(k), pre, "size_var"),
-		obs_module_text("SizeVar"), 0, 100, 1);
+		obs_module_text("SizeVar"), 0,
+		spec->size_var_max > 0 ? spec->size_var_max : 100, 1);
 	obs_properties_add_float_slider(g, bg_key(k, sizeof(k), pre, "alpha"),
 		obs_module_text("Alpha"), 0.0, 1.0, 0.01);
 	obs_properties_add_color(g, bg_key(k, sizeof(k), pre, "color"),

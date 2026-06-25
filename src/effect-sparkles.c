@@ -5,21 +5,35 @@
 
 #include <obs-module.h>
 #include <graphics/graphics.h>
+#include <graphics/image-file.h>
 #include <util/bmem.h>
 
 #include <math.h>
+#include <string.h>
 
 #define PRE "sparkles"
 #define CAPACITY 2048
 #define BG_TAU 6.28318530718f
 
+/* Shape selector (UI order). */
+enum {
+	SP_ROUND = 0,  /* soft round glow            */
+	SP_CIRCLE = 1, /* hard disc                  */
+	SP_CROSS = 2,  /* cross-filter sparkle       */
+	SP_STAR = 3,   /* 5-point star               */
+	SP_IMAGE = 4,  /* user-supplied image        */
+};
+
 static const struct bg_common_spec k_spec = {
-	.size_min = 2.0, .size_max = 80.0, .size_step = 0.5, .size_def = 12.0,
+	/* Particle size now reaches 10× the old 80 px ceiling, with a wider
+	 * size-variation range so a single field can mix tiny and huge glints. */
+	.size_min = 2.0, .size_max = 800.0, .size_step = 1.0, .size_def = 12.0,
 	.life_min = 0.5, .life_max = 10.0, .life_def = 3.0,
 	.rate_max = 200.0, .rate_def = 30.0,
 	.max_cap = CAPACITY, .max_def = 400,
 	.color_def = 0xFFFFFFFF, /* white */
 	.alpha_def = 1.0,
+	.size_var_max = 300,
 };
 
 struct sparkles_state {
@@ -28,9 +42,15 @@ struct sparkles_state {
 
 	struct bg_common common;
 	struct bg_post post;
-	int   shape;         /* 0 round, 1 cross, 2 star */
+	int   shape;         /* enum above                */
 	float twinkle_depth; /* 0..1                      */
 	float twinkle_speed; /* cycles per second         */
+
+	/* Image shape: loaded lazily under the graphics lock. */
+	char            *img_path;   /* desired (from update)        */
+	char            *img_loaded; /* path currently in `img`       */
+	gs_image_file_t  img;
+	bool             has_img;
 };
 
 static void *sparkles_create(void)
@@ -51,6 +71,10 @@ static void sparkles_destroy(void *data)
 	/* Graphics lock held by the host. */
 	if (s->sprite)
 		gs_effect_destroy(s->sprite);
+	if (s->has_img)
+		gs_image_file_free(&s->img);
+	bfree(s->img_path);
+	bfree(s->img_loaded);
 	bg_particles_destroy(s->sys);
 	bfree(s);
 }
@@ -74,6 +98,13 @@ static void sparkles_update(void *data, obs_data_t *settings)
 	s->twinkle_speed = (float)obs_data_get_double(settings,
 		bg_key(k, sizeof(k), PRE, "twinkle_speed"));
 	s->sys->flicker_speed = s->twinkle_speed;
+
+	/* Stash the image path; the texture is (re)loaded in render under the
+	 * graphics lock when it changes. */
+	const char *path = obs_data_get_string(settings,
+		bg_key(k, sizeof(k), PRE, "image"));
+	bfree(s->img_path);
+	s->img_path = (path && path[0]) ? bstrdup(path) : NULL;
 }
 
 static void sparkles_reset(void *data, uint32_t seed)
@@ -137,13 +168,39 @@ static void sparkles_tick(void *data, const struct bg_ctx *ctx, float dt)
 static int sprite_shape(int ui_shape)
 {
 	switch (ui_shape) {
-	case 1:
+	case SP_CIRCLE:
+		return BG_SHAPE_CIRCLE;
+	case SP_CROSS:
 		return BG_SHAPE_CROSS;
-	case 2:
+	case SP_STAR:
 		return BG_SHAPE_STAR;
+	case SP_IMAGE:
+		return BG_SHAPE_IMAGE;
 	default:
 		return BG_SHAPE_SOFT;
 	}
+}
+
+/* (Re)load the image when the path changes. Runs under the graphics lock. */
+static void sparkles_sync_image(struct sparkles_state *s)
+{
+	bool same = (!s->img_path && !s->img_loaded) ||
+		    (s->img_path && s->img_loaded &&
+		     strcmp(s->img_path, s->img_loaded) == 0);
+	if (!same) {
+		if (s->has_img) {
+			gs_image_file_free(&s->img);
+			s->has_img = false;
+		}
+		if (s->img_path) {
+			gs_image_file_init(&s->img, s->img_path);
+			gs_image_file_init_texture(&s->img);
+			s->has_img = true;
+		}
+		bfree(s->img_loaded);
+		s->img_loaded = s->img_path ? bstrdup(s->img_path) : NULL;
+	}
+	s->sys->image = s->has_img ? s->img.texture : NULL;
 }
 
 static void sparkles_render(void *data, const struct bg_ctx *ctx)
@@ -151,16 +208,42 @@ static void sparkles_render(void *data, const struct bg_ctx *ctx)
 	struct sparkles_state *s = data;
 	if (!s->sprite)
 		return;
+
+	if (s->shape == SP_IMAGE)
+		sparkles_sync_image(s);
+	else
+		s->sys->image = NULL;
+
 	gs_blend_state_push();
-	gs_blend_function(GS_BLEND_ONE, GS_BLEND_ONE);
+	/* Image sprites composite (premultiplied); procedural glints are
+	 * additive light. */
+	if (s->shape == SP_IMAGE)
+		gs_blend_function(GS_BLEND_ONE, GS_BLEND_INVSRCALPHA);
+	else
+		gs_blend_function(GS_BLEND_ONE, GS_BLEND_ONE);
 	bg_particles_render(s->sys, s->sprite, sprite_shape(s->shape),
 			    &s->post, &ctx->audio);
 	gs_blend_state_pop();
 }
 
+/* The image picker only matters for the image shape. */
+static bool on_shape_changed(void *priv, obs_properties_t *props,
+			     obs_property_t *prop, obs_data_t *settings)
+{
+	UNUSED_PARAMETER(priv);
+	UNUSED_PARAMETER(prop);
+	char k[96];
+	int shape = (int)obs_data_get_int(settings,
+		bg_key(k, sizeof(k), PRE, "shape"));
+	obs_property_t *img = obs_properties_get(props,
+		bg_key(k, sizeof(k), PRE, "image"));
+	if (img)
+		obs_property_set_visible(img, shape == SP_IMAGE);
+	return true;
+}
+
 static void sparkles_properties(obs_properties_t *g, obs_data_t *settings)
 {
-	UNUSED_PARAMETER(settings);
 	char k[96];
 	bg_common_props(g, PRE, &k_spec);
 
@@ -168,9 +251,22 @@ static void sparkles_properties(obs_properties_t *g, obs_data_t *settings)
 		bg_key(k, sizeof(k), PRE, "shape"),
 		obs_module_text("SparkleShape"), OBS_COMBO_TYPE_LIST,
 		OBS_COMBO_FORMAT_INT);
-	obs_property_list_add_int(shape, obs_module_text("ShapeRound"), 0);
-	obs_property_list_add_int(shape, obs_module_text("ShapeCross"), 1);
-	obs_property_list_add_int(shape, obs_module_text("ShapeStar"), 2);
+	obs_property_list_add_int(shape, obs_module_text("ShapeRound"), SP_ROUND);
+	obs_property_list_add_int(shape, obs_module_text("ShapeCircle"),
+				  SP_CIRCLE);
+	obs_property_list_add_int(shape, obs_module_text("ShapeCross"), SP_CROSS);
+	obs_property_list_add_int(shape, obs_module_text("ShapeStar"), SP_STAR);
+	obs_property_list_add_int(shape, obs_module_text("ShapeImage"), SP_IMAGE);
+	obs_property_set_modified_callback2(shape, on_shape_changed, NULL);
+
+	obs_property_t *img = obs_properties_add_path(g,
+		bg_key(k, sizeof(k), PRE, "image"),
+		obs_module_text("SparkleImage"), OBS_PATH_FILE,
+		"Images (*.png *.jpg *.jpeg *.bmp *.gif *.tga *.webp);;All (*.*)",
+		NULL);
+	int cur = settings ? (int)obs_data_get_int(settings,
+			bg_key(k, sizeof(k), PRE, "shape")) : SP_STAR;
+	obs_property_set_visible(img, cur == SP_IMAGE);
 
 	obs_properties_add_float_slider(g, bg_key(k, sizeof(k), PRE, "twinkle"),
 		obs_module_text("Twinkle"), 0.0, 1.0, 0.01);
@@ -185,8 +281,11 @@ static void sparkles_defaults(obs_data_t *settings)
 {
 	char k[96];
 	bg_common_defaults(settings, PRE, &k_spec);
+	/* Wider size spread by default to show off the larger range. */
+	obs_data_set_default_int(settings, bg_key(k, sizeof(k), PRE, "size_var"),
+				 80);
 	obs_data_set_default_int(settings, bg_key(k, sizeof(k), PRE, "shape"),
-				 2);
+				 SP_STAR);
 	obs_data_set_default_double(settings,
 		bg_key(k, sizeof(k), PRE, "twinkle"), 0.7);
 	obs_data_set_default_double(settings,

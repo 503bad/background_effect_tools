@@ -1,0 +1,151 @@
+/* Procedural realistic flame, drawn as one full-canvas pass.
+ *
+ * Technique (standard real-time fire): a turbulent fbm noise field scrolls
+ * upward (rising hot gas); a domain warp adds curling tongues; a shape mask
+ * tapers the body with height and erodes the edges into licking flames; the
+ * resulting "heat" drives a colour ramp (white-hot base → core colour → outer
+ * colour → transparent at the cooling tip). Temporal noise gives the flicker
+ * (ゆらめき). glow/bloom/flare add the surrounding light. Output is
+ * premultiplied alpha so it composites over any background. */
+
+uniform float4x4 ViewProj;
+uniform float2 canvas;
+uniform float  time;
+uniform float2 base;       /* flame base position in px           */
+uniform float  half_width; /* half flame width in px              */
+uniform float  height;     /* flame height in px                  */
+uniform float  rot;        /* rotation in radians (0 = upright)   */
+uniform float3 col_core;   /* hot inner colour                    */
+uniform float3 col_outer;  /* cooler outer colour                 */
+uniform float  emissive;   /* core brightness boost (発光)         */
+uniform float  glow;       /* halo hugging the body (光彩)         */
+uniform float  bloom;      /* wide soft spill (ブルーム)           */
+uniform float  flare;      /* lens-flare streaks                  */
+uniform float  flicker;    /* turbulence + temporal flicker (ゆらめき) */
+uniform float  rise;       /* upward scroll speed                 */
+uniform float  detail;     /* noise feature scale                 */
+uniform float  opacity;    /* overall alpha                       */
+
+struct VertData {
+	float4 pos : POSITION;
+	float2 uv  : TEXCOORD0;
+};
+
+VertData VSDefault(VertData v)
+{
+	VertData o;
+	o.pos = mul(float4(v.pos.xyz, 1.0), ViewProj);
+	o.uv = v.uv;
+	return o;
+}
+
+float hash21(float2 p)
+{
+	return frac(sin(dot(p, float2(127.1, 311.7))) * 43758.5453);
+}
+
+float vnoise(float2 p)
+{
+	float2 i = floor(p);
+	float2 f = frac(p);
+	float2 u = f * f * (3.0 - 2.0 * f);
+	float a = hash21(i);
+	float b = hash21(i + float2(1.0, 0.0));
+	float c = hash21(i + float2(0.0, 1.0));
+	float d = hash21(i + float2(1.0, 1.0));
+	return lerp(lerp(a, b, u.x), lerp(c, d, u.x), u.y);
+}
+
+float fbm(float2 p)
+{
+	float f = 0.0;
+	f += 0.5000 * vnoise(p);
+	p *= 2.02;
+	f += 0.2500 * vnoise(p);
+	p *= 2.03;
+	f += 0.1250 * vnoise(p);
+	p *= 1.99;
+	f += 0.0625 * vnoise(p);
+	p *= 2.01;
+	f += 0.03125 * vnoise(p);
+	return f / 0.96875;
+}
+
+float4 PSFlame(VertData v) : TARGET
+{
+	float2 pix = v.uv * canvas;
+	float2 d = pix - base;
+	float c = cos(rot), s = sin(rot);
+	/* local frame: lp.x across the flame, lp.y down-screen from the base */
+	float2 lp = float2(d.x * c + d.y * s, -d.x * s + d.y * c);
+	float lu = lp.x / max(half_width, 1.0);
+	float lv = -lp.y / max(height, 1.0); /* up the flame, 0 = base */
+
+	float3 outRgb = float3(0.0, 0.0, 0.0);
+	float outA = 0.0;
+
+	/* Only shade inside the flame envelope; everything else stays clear. */
+	if (lv > -0.06 && lv < 1.4 && abs(lu) < 2.6) {
+
+	/* Rising, domain-warped turbulence. */
+	float2 np = float2(lu * 1.6, lv * 2.6 - time * rise);
+	float2 warp = float2(fbm(np * 0.8 + 3.1), fbm(np * 0.8 + 8.7)) - 0.5;
+	float n = fbm(np * max(detail, 0.1) + warp * (0.7 + flicker * 1.6));
+
+	/* Whole-flame temporal flicker. */
+	float fl = 1.0 + flicker * 0.6 *
+			   (fbm(float2(time * 2.1, lv * 1.5 + time * 0.7)) - 0.5) *
+			   2.0;
+
+	/* Shape: taper the width with height, hot at the base, cooling to tip. */
+	float widthAt = max(1.0 - 0.8 * lv, 0.04);
+	float hfall = pow(saturate(1.0 - abs(lu) / widthAt), 1.3);
+	float vfall = saturate(1.0 - lv) * smoothstep(-0.06, 0.12, lv);
+
+	float heat = n * fl * hfall * vfall;
+	/* Erode edges into tongues; the threshold rises with height. */
+	heat = saturate(heat * 2.0 - lv * 0.55 - 0.12);
+
+	/* Colour ramp: outer → core → white-hot at the base. */
+	float h = heat;
+	float3 col = lerp(col_outer, col_core, saturate(h * 1.3));
+	col += saturate(h - 0.75) * 3.0 * float3(0.25, 0.18, 0.12);
+	col *= (1.0 + emissive * 2.0);
+
+	float a = saturate(h * 1.4) * opacity;
+	float3 rgb = col * a;
+
+	/* Surrounding light. */
+	if (glow > 0.0 || bloom > 0.0 || flare > 0.0) {
+		float axis = abs(lu);
+		float gterm = exp(-axis * 2.2) * saturate(1.0 - lv * 0.7) *
+			      saturate(lv + 0.2);
+		float bterm = exp(-axis * 0.9) * exp(-max(lv - 0.1, 0.0) * 1.3) *
+			      saturate(lv + 0.4);
+		float vstreak = exp(-axis * 9.0) * saturate(1.0 - lv * 0.5);
+		float hstreak = exp(-abs(lv - 0.06) * 10.0) * exp(-axis * 1.2);
+		float fterm = vstreak + 0.5 * hstreak;
+		float3 light = col_core * (gterm * glow * 1.2 +
+					   bterm * bloom * 1.0 +
+					   fterm * flare * 1.5);
+		float la = (gterm * glow * 0.5 + bterm * bloom * 0.4 +
+			    fterm * flare * 0.7) * opacity;
+		rgb += light * opacity;
+		a = saturate(a + la);
+	}
+
+	outRgb = rgb;
+	outA = a;
+	}
+
+	return float4(outRgb, outA);
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v);
+		pixel_shader  = PSFlame(v);
+	}
+}

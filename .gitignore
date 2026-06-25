@@ -25,3 +25,5 @@ CMakeUserPresets.json
 *.pdb
 *.exp
 *.lib
+
+memo/

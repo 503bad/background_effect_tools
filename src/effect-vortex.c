@@ -216,7 +216,8 @@ static void vortex_spawn(struct vortex_state *s, const struct bg_ctx *ctx)
 		p->rot = ang;
 		p->vrot = (BG_TAU / 360.0f) * s->swirl *
 			  bg_frand_range(sys, 0.85f, 1.15f);
-		p->aux0 = s->radius * bg_frand_range(sys, 0.35f, 1.0f);
+		/* Funnel is 3× wider than the radius slot (wide tornado). */
+		p->aux0 = s->radius * 3.0f * bg_frand_range(sys, 0.35f, 1.0f);
 		p->y = h + bg_frand(sys) * h * 0.04f;
 		p->vy = -s->updraft * bg_frand_range(sys, 0.7f, 1.25f);
 		p->x = cx + p->aux0 * cosf(ang);

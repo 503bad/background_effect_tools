@@ -130,6 +130,12 @@ void bg_particles_render(struct bg_particle_system *s, gs_effect_t *e,
 	if (a_color && audio->color_peak_on)
 		bg_unpack_color(audio->color_peak, peak);
 
+	/* Image sprites need a bound texture; fall back to the soft blob when
+	 * the shape is set to image but no texture has loaded yet. */
+	bool use_image = (shape == BG_SHAPE_IMAGE) && s->image;
+	if (shape == BG_SHAPE_IMAGE && !s->image)
+		shape = BG_SHAPE_SOFT;
+
 	gs_eparam_t *p;
 	if ((p = gs_effect_get_param_by_name(e, "shape")))
 		gs_effect_set_float(p, (float)shape);
@@ -143,6 +149,16 @@ void bg_particles_render(struct bg_particle_system *s, gs_effect_t *e,
 		gs_effect_set_float(p, flare);
 	if ((p = gs_effect_get_param_by_name(e, "quad_scale")))
 		gs_effect_set_float(p, BG_QUAD_SCALE);
+	if ((p = gs_effect_get_param_by_name(e, "gloss")))
+		gs_effect_set_float(p, s->gloss);
+	if ((p = gs_effect_get_param_by_name(e, "rim_width")))
+		gs_effect_set_float(p, s->rim_width > 0.0f ? s->rim_width : 0.2f);
+	if ((p = gs_effect_get_param_by_name(e, "softness")))
+		gs_effect_set_float(p, s->softness);
+	if ((p = gs_effect_get_param_by_name(e, "image_tex")) && s->image)
+		gs_effect_set_texture(p, s->image);
+	if ((p = gs_effect_get_param_by_name(e, "use_image")))
+		gs_effect_set_float(p, use_image ? 1.0f : 0.0f);
 
 	while (gs_effect_loop(e, "Draw")) {
 		gs_render_start(true);

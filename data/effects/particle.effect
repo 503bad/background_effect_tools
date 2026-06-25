@@ -10,12 +10,23 @@
 
 uniform float4x4 ViewProj;
 
-uniform float shape;      /* 0 soft 1 circle 2 cross 3 star 4 puff */
+uniform float shape;      /* 0 soft 1 circle 2 cross 3 star 4 puff 5 bubble 6 image */
 uniform float glow;
 uniform float bloom;
 uniform float emissive;
 uniform float flare;
 uniform float quad_scale; /* uv→core mapping factor */
+uniform float gloss;      /* bubble specular highlight strength */
+uniform float rim_width;  /* bubble outline thickness, fraction of radius */
+uniform float softness;   /* circle (shape 1) edge blur, 0 crisp .. 1 soft */
+uniform float use_image;  /* 1 = sample image_tex (shape 6) */
+uniform texture2d image_tex;
+
+sampler_state imgSampler {
+	Filter   = Linear;
+	AddressU = Clamp;
+	AddressV = Clamp;
+};
 
 struct VertData {
 	float4 pos   : POSITION;
@@ -86,15 +97,93 @@ float4 PSSprite(VertData v) : TARGET
 	float seed = v.dat.x;
 	int sh = int(shape + 0.5);
 
+	/* Image sprite: sample the bound texture, tint by the vertex colour,
+	 * output premultiplied alpha. `softness` (0..1) blurs the image with a
+	 * 9-tap box for the にじみ / bleed look; glow/bloom/flare add a coloured
+	 * light halo hugging the sprite so image particles glow like the
+	 * procedural shapes. */
+	if (sh == 6) {
+		float4 t;
+		if (softness > 0.001) {
+			float r = softness * 0.08; /* uv blur radius */
+			t = image_tex.Sample(imgSampler, v.uv) * 0.25;
+			t += image_tex.Sample(imgSampler, v.uv + float2(r, 0.0)) * 0.125;
+			t += image_tex.Sample(imgSampler, v.uv - float2(r, 0.0)) * 0.125;
+			t += image_tex.Sample(imgSampler, v.uv + float2(0.0, r)) * 0.125;
+			t += image_tex.Sample(imgSampler, v.uv - float2(0.0, r)) * 0.125;
+			t += image_tex.Sample(imgSampler, v.uv + float2(r, r)) * 0.0625;
+			t += image_tex.Sample(imgSampler, v.uv + float2(r, -r)) * 0.0625;
+			t += image_tex.Sample(imgSampler, v.uv + float2(-r, r)) * 0.0625;
+			t += image_tex.Sample(imgSampler, v.uv + float2(-r, -r)) * 0.0625;
+		} else {
+			t = image_tex.Sample(imgSampler, v.uv);
+		}
+		float a = t.a * v.color.a;
+		float3 rgb = t.rgb * v.color.rgb * a * (1.0 + emissive * 2.0);
+
+		/* Coloured light halo around the sprite (skipped when off). */
+		if (glow > 0.0 || bloom > 0.0 || flare > 0.0) {
+			float2 q = (v.uv - 0.5) * quad_scale;
+			float d = length(q);
+			float ghalo = pow(saturate(1.0 - d * 1.7), 2.0);
+			float halo = pow(saturate(1.0 - d / 1.15), 3.0);
+			float ext = quad_scale * 0.5;
+			float sh_h = pow(saturate(1.0 - abs(q.y) * 6.0), 3.0) *
+				     pow(saturate(1.0 - abs(q.x) / ext), 1.5);
+			float sh_v = pow(saturate(1.0 - abs(q.x) * 6.0), 3.0) *
+				     pow(saturate(1.0 - abs(q.y) / ext), 1.5);
+			float streak = flare * (sh_h + 0.5 * sh_v);
+			float lightA = (ghalo * glow * 0.6 + halo * bloom * 0.5 +
+					streak * 0.8) * v.color.a;
+			rgb += v.color.rgb * (ghalo * glow * 1.2 + halo * bloom * 1.2 +
+					      streak * 1.5) * v.color.a;
+			a = saturate(a + lightA);
+		}
+		return float4(rgb, a);
+	}
+
+	/* Bubble: translucent body, bright outline rim and a specular gloss
+	 * dot in the upper-left. The rim is a band `rim_width` (fraction of the
+	 * radius) thick hugging the edge. Output is premultiplied alpha — every
+	 * channel is scaled by the particle alpha so the opacity slider both
+	 * dims the bubble and lets the background through. */
+	if (sh == 5) {
+		float r = length(p) * 2.0;            /* 0 centre .. 1 edge */
+		float disc = saturate(1.0 - r);
+		float body = disc * disc * 0.22;      /* faint interior     */
+
+		/* Triangular rim band from (1-rim_width) to the edge. */
+		float inner = 1.0 - rim_width;
+		float center = (inner + 1.0) * 0.5;
+		float halfw = max(rim_width * 0.5, 1e-3);
+		float rim = saturate(1.0 - abs(r - center) / halfw);
+		rim *= rim;
+
+		float2 hp = p - float2(-0.16, -0.16); /* highlight offset   */
+		float spec = pow(saturate(1.0 - length(hp) * 3.2), 3.0) * gloss;
+		float halo = pow(disc, 3.0) * glow * 0.5;
+
+		float coverage = saturate(body + rim * 0.9 + halo);
+		float baseA = coverage * v.color.a;
+		float specA = spec * v.color.a;
+		float3 col = v.color.rgb * baseA + specA; /* white gloss    */
+		float a = saturate(baseA + specA);
+		return float4(col, a);
+	}
+
 	float fill;
 	if (sh == 0) {
 		float d = length(p) * 2.0;
 		fill = saturate(1.0 - d);
 		fill *= fill;
 	} else if (sh == 1) {
+		/* Hard disc with a softness-controlled edge: at softness 0 the
+		 * rim is a crisp 1px AA, at 1 it fades all the way to the centre
+		 * for a soft round flake. */
 		float sd = length(p) - 0.34;
 		float aa = max(fwidth(sd), 1e-4);
-		fill = smoothstep(aa, -aa, sd);
+		float edge = aa + softness * 0.34;
+		fill = smoothstep(edge, -edge, sd);
 	} else if (sh == 2) {
 		/* Cross-filter sparkle: two thin perpendicular lobes plus a
 		 * hot middle. */

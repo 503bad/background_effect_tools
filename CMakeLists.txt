@@ -32,17 +32,34 @@ target_sources(
     src/bgfx-source.c
     src/bgfx-registry.c
     src/bgfx-particles.c
+    src/bgfx-glowline.c
     src/bgfx-props.c
     src/bgfx-audio.c
     src/effect-smoke.c
     src/effect-embers.c
+    src/effect-snow.c
     src/effect-clouds.c
     src/effect-sparkles.c
+    src/effect-bubble.c
     src/effect-gravity.c
     src/effect-vortex.c
+    src/effect-voice.c
     src/effect-spectrum.c
     src/effect-audioviz.c
+    src/effect-geometric.c
+    src/effect-magiccircle.c
+    src/effect-radial.c
+    src/effect-imgparticle.c
+    src/effect-dotlight.c
+    src/effect-beatspot.c
+    src/effect-textparticle.c
+    src/effect-flame.c
 )
+
+# Text-particle glyph rasterization uses GDI on Windows.
+if(WIN32)
+  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE gdi32)
+endif()
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})
 

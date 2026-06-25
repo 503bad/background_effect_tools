@@ -20,6 +20,7 @@ enum spectrum_mode {
 	SPEC_BARS = 1,     /* bottom bars + peak caps (Monstercat)   */
 	SPEC_WAVE = 2,     /* time-domain waveform wrapped to a ring  */
 	SPEC_BEAT = 3,     /* beat-driven particle bursts             */
+	SPEC_DOTS = 4,     /* LED dot-matrix bars (cells light up)    */
 };
 
 static const struct bg_common_spec k_spec = {
@@ -49,6 +50,8 @@ struct spectrum_state {
 	float    burst;
 	float    burst_speed;
 	bool     mirror;
+	int      dot_cols;   /* dot-matrix column (division) count */
+	float    dot_size;   /* one cell/dot pixel pitch           */
 
 	float    col1[4], col2[4];
 	float    peak[BG_FFT_BARS];
@@ -175,6 +178,10 @@ static void spectrum_update(void *data, obs_data_t *settings)
 		bg_key(k, sizeof(k), PRE, "burst_speed"));
 	s->mirror = obs_data_get_bool(settings,
 		bg_key(k, sizeof(k), PRE, "mirror"));
+	s->dot_cols = (int)obs_data_get_int(settings,
+		bg_key(k, sizeof(k), PRE, "dot_cols"));
+	s->dot_size = (float)obs_data_get_double(settings,
+		bg_key(k, sizeof(k), PRE, "dot_size"));
 
 	bg_unpack_color(s->common.color, s->col1);
 	bg_unpack_color(s->color2, s->col2);
@@ -372,6 +379,62 @@ static void draw_bars(struct spectrum_state *s, const struct bg_audio_fft *fft,
 	}
 }
 
+/* LED dot-matrix: `dot_cols` frequency columns, each a stack of square cells
+ * lit from the bottom up to its level. The grid is sized from `dot_size` (cell
+ * pitch); a single brighter cell marks the slow-falling peak. */
+static void draw_dots(struct spectrum_state *s, const struct bg_audio_fft *fft,
+		      float w, float h)
+{
+	int N = s->dot_cols;
+	if (N < 2)
+		N = 2;
+	float cell = s->dot_size;
+	if (cell < 3.0f)
+		cell = 3.0f;
+	int rows = (int)(h / cell);
+	if (rows < 1)
+		rows = 1;
+	float gap = cell * 0.16f;
+	float half = (cell - gap) * 0.5f;
+	float slot = w / (float)N;
+	/* Centre the cell stack vertically within the canvas. */
+	float gridH = rows * cell;
+	float botY = h - (h - gridH) * 0.5f; /* baseline of row 0 */
+
+	for (int b = 0; b < N; ++b) {
+		/* Resample the BG_FFT_BARS spectrum to N columns. */
+		float fp = (float)b / (float)(N - 1) * (float)(BG_FFT_BARS - 1);
+		int i0 = (int)fp;
+		int i1 = i0 + 1 < BG_FFT_BARS ? i0 + 1 : BG_FFT_BARS - 1;
+		float v = fft->bars[i0] + (fft->bars[i1] - fft->bars[i0]) *
+						  (fp - (float)i0);
+		float pk = s->peak[i0] + (s->peak[i1] - s->peak[i0]) *
+						 (fp - (float)i0);
+
+		int lit = (int)(clamp01f(v) * (float)rows + 0.5f);
+		int pkRow = (int)(clamp01f(pk) * (float)(rows - 1) + 0.5f);
+		float cxp = b * slot + slot * 0.5f;
+
+		for (int r = 0; r < rows; ++r) {
+			float rowFrac = (float)r / (float)(rows > 1 ? rows - 1
+								       : 1);
+			float rgb[3];
+			grad_rgb(s, rowFrac, rgb); /* low→high colour ramp */
+			float inten;
+			if (r < lit)
+				inten = s->common.alpha * (0.55f + 0.45f * v);
+			else if (r == pkRow && pk > 0.02f)
+				inten = s->common.alpha * 0.9f; /* peak cap cell */
+			else
+				inten = s->common.alpha * 0.06f; /* dim idle cell */
+			uint32_t col = premul(rgb, inten);
+			float cyp = botY - (r + 0.5f) * cell;
+			quad(col, cxp - half, cyp + half, cxp + half, cyp + half,
+			     cxp + half, cyp - half, cxp - half, cyp - half);
+		}
+	}
+}
+
 static void draw_wave(struct spectrum_state *s, const struct bg_audio_fft *fft,
 		      float cx, float cy)
 {
@@ -422,6 +485,8 @@ static void spectrum_render(void *data, const struct bg_ctx *ctx)
 				draw_circular(s, fft, cx, cy);
 			else if (s->mode == SPEC_BARS)
 				draw_bars(s, fft, w, h);
+			else if (s->mode == SPEC_DOTS)
+				draw_dots(s, fft, w, h);
 			else if (s->mode == SPEC_WAVE)
 				draw_wave(s, fft, cx, cy);
 			gs_render_stop(GS_TRIS);
@@ -448,6 +513,7 @@ static void spectrum_apply_vis(obs_properties_t *props, int mode)
 	obs_property_t *p;
 	bool circ = mode == SPEC_CIRCULAR, bars = mode == SPEC_BARS;
 	bool wave = mode == SPEC_WAVE, beat = mode == SPEC_BEAT;
+	bool dots = mode == SPEC_DOTS;
 #define VIS(name, cond)                                                       \
 	if ((p = obs_properties_get(props, bg_key(k, sizeof(k), PRE, name))))  \
 	obs_property_set_visible(p, (cond))
@@ -456,6 +522,8 @@ static void spectrum_apply_vis(obs_properties_t *props, int mode)
 	VIS("bar_width", circ || bars);
 	VIS("rotate", circ || wave);
 	VIS("mirror", circ);
+	VIS("dot_cols", dots);
+	VIS("dot_size", dots);
 	VIS("burst", circ || beat);
 	VIS("burst_speed", circ || beat);
 	/* The post (glow/bloom/…) only affects the burst particles. */
@@ -492,6 +560,8 @@ static void spectrum_properties(obs_properties_t *g, obs_data_t *settings)
 				  SPEC_WAVE);
 	obs_property_list_add_int(mode, obs_module_text("SpectrumModeBeat"),
 				  SPEC_BEAT);
+	obs_property_list_add_int(mode, obs_module_text("SpectrumModeDots"),
+				  SPEC_DOTS);
 	obs_property_set_modified_callback2(mode, on_spectrum_mode, NULL);
 
 	obs_properties_add_float_slider(g, bg_key(k, sizeof(k), PRE, "radius"),
@@ -504,6 +574,10 @@ static void spectrum_properties(obs_properties_t *g, obs_data_t *settings)
 		obs_module_text("SpectrumRotate"), -90.0, 90.0, 1.0);
 	obs_properties_add_bool(g, bg_key(k, sizeof(k), PRE, "mirror"),
 		obs_module_text("SpectrumMirror"));
+	obs_properties_add_int_slider(g, bg_key(k, sizeof(k), PRE, "dot_cols"),
+		obs_module_text("SpectrumDotCols"), 4, 128, 1);
+	obs_properties_add_float_slider(g, bg_key(k, sizeof(k), PRE, "dot_size"),
+		obs_module_text("SpectrumDotSize"), 4.0, 80.0, 1.0);
 
 	bg_common_props(g, PRE, &k_spec);
 
@@ -539,6 +613,10 @@ static void spectrum_defaults(obs_data_t *settings)
 		bg_key(k, sizeof(k), PRE, "rotate"), 0.0);
 	obs_data_set_default_bool(settings, bg_key(k, sizeof(k), PRE, "mirror"),
 				  true);
+	obs_data_set_default_int(settings, bg_key(k, sizeof(k), PRE, "dot_cols"),
+				 32);
+	obs_data_set_default_double(settings,
+		bg_key(k, sizeof(k), PRE, "dot_size"), 22.0);
 	obs_data_set_default_int(settings, bg_key(k, sizeof(k), PRE, "color2"),
 				 (long long)0xFFC864FF); /* pink (#FF64C8) */
 	obs_data_set_default_double(settings, bg_key(k, sizeof(k), PRE, "grad"),

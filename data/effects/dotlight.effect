@@ -1,0 +1,100 @@
+/* Dot-light grid: a regular grid of glowing dots whose brightness is driven by
+ * a travelling wave along one axis. The continuous "Dot Light" effect advances
+ * `phase` with time; the "Beat Dot Light" effect drives `phase`/`flash` from the
+ * kick, so both share this shader. Drawn as a full-canvas sprite, premultiplied
+ * alpha (the solid dot occludes; glow/bloom/flare add light without darkening).
+ *   spacing  - grid pitch in px
+ *   dotsize  - dot diameter in px
+ *   axis     - 0 wave travels vertically, 1 horizontally
+ *   cycles   - number of bright bands across the travel axis
+ *   phase    - travelling-wave offset (advanced on the CPU)
+ *   sharp    - band tightness (higher = tighter lit band)
+ *   flash    - 0..1 global brightness lift (beat flash)
+ *   floor_b  - resting brightness floor
+ *   glow/bloom/blur/flare - per-dot light extras */
+
+uniform float4x4 ViewProj;
+
+uniform float2 canvas;
+uniform float4 color_a;
+uniform float4 color_b;
+uniform float  color_mode; /* 0 single, 1 gradient (A->B along axis) */
+uniform float  spacing;
+uniform float  dotsize;
+uniform float  axis;
+uniform float  cycles;
+uniform float  phase;
+uniform float  sharp;
+uniform float  flash;
+uniform float  floor_b;
+uniform float  glow;
+uniform float  bloom;
+uniform float  blur;
+uniform float  flare;
+uniform float  opacity;
+
+struct VertData {
+	float4 pos : POSITION;
+	float2 uv  : TEXCOORD0;
+};
+
+VertData VSDefault(VertData v)
+{
+	VertData o;
+	o.pos = mul(float4(v.pos.xyz, 1.0), ViewProj);
+	o.uv = v.uv;
+	return o;
+}
+
+float4 PSDot(VertData v) : TARGET
+{
+	float2 pix = v.uv * canvas;
+	float sp = max(spacing, 2.0);
+	float2 cell = floor(pix / sp);
+	float2 center = (cell + 0.5) * sp;
+	float2 d2 = pix - center;
+	float dist = length(d2);
+	float radius = max(dotsize * 0.5, 0.5);
+
+	/* Solid dot with a blur-controlled soft edge. */
+	float edge = radius * (0.15 + blur * 1.2);
+	float core = 1.0 - smoothstep(radius - edge, radius + edge, dist);
+
+	/* This dot's position along the travel axis (0..1). */
+	float along = (axis > 0.5) ? center.x / max(canvas.x, 1.0)
+				   : center.y / max(canvas.y, 1.0);
+	float band = 0.5 + 0.5 * cos((along * cycles - phase) * 6.28318530718);
+	band = pow(saturate(band), max(sharp, 0.1));
+
+	float lit = saturate(floor_b + (1.0 - floor_b) * band + flash);
+
+	/* Light extras (additive, do not occlude). */
+	float halo_g = exp(-dist / max(radius * (0.6 + glow * 2.5), 1.0)) * glow;
+	float halo_b = exp(-dist / max(radius * (1.5 + bloom * 6.0), 1.0)) *
+		       bloom * 0.7;
+
+	float ax = abs(d2.x), ay = abs(d2.y);
+	float reach = radius * (4.0 + flare * 18.0);
+	float thin = max(radius * 0.6, 1.0);
+	float streak_h = saturate(1.0 - ay / thin) * saturate(1.0 - ax / reach);
+	float streak_v = saturate(1.0 - ax / thin) * saturate(1.0 - ay / reach);
+	float streak = flare * (streak_h + streak_v) * 0.6;
+
+	float intensity = (core + halo_g + halo_b + streak) * lit;
+
+	float t = (color_mode > 0.5) ? along : 0.0;
+	float3 col = lerp(color_a.rgb, color_b.rgb, t);
+
+	float outA = saturate(core * lit) * opacity;
+	float3 outRGB = col * intensity * opacity;
+	return float4(outRGB, outA);
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v);
+		pixel_shader  = PSDot(v);
+	}
+}

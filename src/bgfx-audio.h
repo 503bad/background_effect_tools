@@ -3,6 +3,7 @@
 #include <obs-module.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <math.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -49,6 +50,56 @@ void bg_audio_defaults(obs_data_t *s);
  * into the out params. Does not touch mod->enabled or mod->level. */
 void bg_audio_read(struct bg_audio_mod *mod, float *gain_db, float *attack,
 		   float *release, obs_data_t *s);
+
+/* ---- shared audio reaction for non-particle (geometry) effects ----------- */
+
+/* Frame-constant factors derived from the shared size / colour / bounce
+ * targets, for effects that draw geometry directly instead of going through
+ * bg_particles_render (which applies the same targets to particles). Fill once
+ * per frame with bg_audio_react_init, then use the inline helpers while
+ * drawing. Mirrors the semantics in bg_particles_render. */
+struct bg_audio_react {
+	float size_mul;      /* multiply shape size/scale (1 = none)         */
+	float bounce_amp;    /* vertical hop amplitude, px (0 = off)         */
+	float bounce_speed;  /* hop oscillation, Hz                          */
+	bool  color_on;      /* shift colours this frame                     */
+	bool  color_peak_on; /* blend toward peak colour (else brighten)     */
+	float color_amt;     /* 0..1 strength this frame (amount × level)    */
+	float peak[4];       /* peak colour rgba (when color_peak_on)        */
+};
+
+/* Derive this frame's reaction from the shared mod. With audio disabled or a
+ * zero level, yields the identity (size_mul = 1, no bounce, no colour). */
+void bg_audio_react_init(struct bg_audio_react *r, const struct bg_audio_mod *m);
+
+/* Vertical hop offset (px, ≤ 0) for a shape at oscillator phase `phase`
+ * (radians); 0 when bounce is off. */
+static inline float bg_audio_react_bounce(const struct bg_audio_react *r,
+					  float clock, float phase)
+{
+	if (r->bounce_amp <= 0.0f)
+		return 0.0f;
+	float v = sinf(clock * r->bounce_speed * 6.28318530718f + phase);
+	return -r->bounce_amp * (v < 0.0f ? -v : v);
+}
+
+/* Apply the colour reaction to `rgb` in place (no-op when colour is off). */
+static inline void bg_audio_react_color(const struct bg_audio_react *r,
+					float rgb[3])
+{
+	if (!r->color_on)
+		return;
+	float amt = r->color_amt;
+	if (r->color_peak_on) {
+		rgb[0] += (r->peak[0] - rgb[0]) * amt;
+		rgb[1] += (r->peak[1] - rgb[1]) * amt;
+		rgb[2] += (r->peak[2] - rgb[2]) * amt;
+	} else {
+		rgb[0] *= 1.0f + amt;
+		rgb[1] *= 1.0f + amt;
+		rgb[2] *= 1.0f + amt;
+	}
+}
 
 #ifdef __cplusplus
 }

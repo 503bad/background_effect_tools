@@ -1,0 +1,91 @@
+/* Stage spotlight: one beam drawn per full-canvas pass (the CPU draws this once
+ * per beam, additively). A beam is either a downward light cone fanning from an
+ * apex, or a head-on "front facing" glowing disc. The CPU animates apex / angle
+ * / colour / intensity / type on every beat.
+ *   apex       - cone apex (or disc centre) in px
+ *   dir        - beam direction in radians (screen y grows down; PI/2 = down)
+ *   beam_len   - cone length in px
+ *   half_angle - cone half-angle in radians
+ *   beam_type  - 0 cone, 1 front disc
+ *   radius     - disc radius in px (front disc)
+ *   beam_color - rgb light colour
+ *   intensity  - brightness multiplier
+ *   softness   - cone edge softness 0..1
+ *   bloom      - extra soft spill 0..1 */
+
+uniform float4x4 ViewProj;
+
+uniform float2 canvas;
+uniform float2 apex;
+uniform float  dir;
+uniform float  beam_len;
+uniform float  half_angle;
+uniform float  beam_type;
+uniform float  radius;
+uniform float4 beam_color;
+uniform float  intensity;
+uniform float  softness;
+uniform float  bloom;
+
+struct VertData {
+	float4 pos : POSITION;
+	float2 uv  : TEXCOORD0;
+};
+
+VertData VSDefault(VertData v)
+{
+	VertData o;
+	o.pos = mul(float4(v.pos.xyz, 1.0), ViewProj);
+	o.uv = v.uv;
+	return o;
+}
+
+float4 PSSpot(VertData v) : TARGET
+{
+	float2 pix = v.uv * canvas;
+	float2 d = pix - apex;
+	float val = 0.0;
+
+	if (beam_type < 0.5) {
+		/* Cone: project onto the beam axis and its perpendicular. */
+		float2 ax = float2(cos(dir), sin(dir));
+		float2 pp = float2(-ax.y, ax.x);
+		float t = dot(d, ax);
+		float s = dot(d, pp);
+		if (t > 0.0 && t < beam_len) {
+			float along01 = t / beam_len;
+			float w = t * tan(clamp(half_angle, 0.0, 1.4)) + 6.0;
+			float across = abs(s) / w;
+			float core = 1.0 -
+				smoothstep(1.0 - 0.5 * softness - 0.001, 1.0,
+					   across);
+			float lenf = saturate(1.0 - along01);
+			lenf *= smoothstep(0.0, 0.05, along01);
+			val = core * lenf;
+
+			/* Softer, wider spill for bloom. */
+			float wide = across / (1.0 + bloom * 1.8);
+			val += bloom * exp(-wide * wide * 2.0) * lenf * 0.5;
+		}
+	} else {
+		/* Front-facing disc (light aimed at the camera). */
+		float dist = length(d);
+		float r = max(radius, 1.0);
+		float core = pow(saturate(1.0 - dist / r), 2.0);
+		float halo = exp(-dist / max(r * (0.6 + bloom * 3.0), 1.0));
+		val = core + bloom * halo * 0.6;
+	}
+
+	val *= intensity;
+	float3 rgb = beam_color.rgb * val;
+	return float4(rgb, saturate(val));
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v);
+		pixel_shader  = PSSpot(v);
+	}
+}

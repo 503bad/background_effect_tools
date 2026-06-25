@@ -26,8 +26,13 @@
 #define K_BOUNCE_AMT  "audio_bounce_amt"
 #define K_BOUNCE_SPD  "audio_bounce_speed"
 
-#define FFT_N    1024        /* analysis window (power of two)            */
-#define RING_CAP 4096        /* PCM ring capacity (power of two)          */
+/* 4096-pt window → ~11.7 Hz bins at 48 kHz. 1024 was too coarse for the bass:
+ * the whole 30–90 Hz kick range fell into a single FFT bin, so per-effect kick
+ * band (lo/hi Hz) selectors all read the same data and appeared to do nothing.
+ * Bar magnitudes are normalised by FFT_N (line ~288) so absolute levels — and
+ * the thresholds that depend on them — are unchanged by this. */
+#define FFT_N    4096        /* analysis window (power of two)            */
+#define RING_CAP 8192        /* PCM ring capacity (power of two)          */
 #define RING_MASK (RING_CAP - 1)
 
 struct bg_audio_meter {
@@ -262,6 +267,8 @@ float bg_audio_tick(struct bg_audio_meter *m, float dt, float gain_db,
 	/* --- log-spaced bars --- */
 	const float fmin = 30.0f, fmax = (float)sr * 0.45f;
 	const float ratio = fmax / fmin;
+	m->fft.freq_min = fmin;
+	m->fft.freq_max = fmax;
 	float ba = (lvl > m->fft.bars[0]) ? attack : release; /* reuse curves */
 	float bar_a = (ba > 1e-4f) ? 1.0f - expf(-dt / (ba + 0.02f)) : 1.0f;
 	for (int b = 0; b < BG_FFT_BARS; ++b) {
@@ -418,4 +425,33 @@ void bg_audio_read(struct bg_audio_mod *mod, float *gain_db, float *attack,
 	mod->bounce_on = obs_data_get_bool(s, K_BOUNCE_ON);
 	mod->bounce_amount = (float)obs_data_get_double(s, K_BOUNCE_AMT);
 	mod->bounce_speed = (float)obs_data_get_double(s, K_BOUNCE_SPD);
+}
+
+void bg_audio_react_init(struct bg_audio_react *r, const struct bg_audio_mod *m)
+{
+	r->size_mul = 1.0f;
+	r->bounce_amp = 0.0f;
+	r->bounce_speed = 0.0f;
+	r->color_on = false;
+	r->color_peak_on = false;
+	r->color_amt = 0.0f;
+	r->peak[0] = r->peak[1] = r->peak[2] = r->peak[3] = 0.0f;
+
+	float lvl = (m && m->enabled) ? m->level : 0.0f;
+	if (lvl <= 0.0f)
+		return;
+
+	if (m->size_on)
+		r->size_mul = 1.0f + m->size_amount * lvl;
+	if (m->bounce_on) {
+		r->bounce_amp = m->bounce_amount * lvl;
+		r->bounce_speed = m->bounce_speed;
+	}
+	if (m->color_on) {
+		r->color_on = true;
+		r->color_peak_on = m->color_peak_on;
+		r->color_amt = m->color_amount * lvl;
+		if (m->color_peak_on)
+			bg_unpack_color(m->color_peak, r->peak);
+	}
 }

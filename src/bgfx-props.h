@@ -46,6 +46,7 @@ struct bg_common_spec {
 	int    max_cap, max_def;
 	long long color_def; /* OBS 0xAABBGGRR */
 	double alpha_def;
+	int    size_var_max; /* size-variation slider max %, 0 → default 100 */
 };
 
 void bg_common_props(obs_properties_t *g, const char *pre,
@@ -153,7 +154,16 @@ struct bg_audio_fft {
 	float beat;                   /* 0..1 pulse, decays after an onset    */
 	bool  beat_trigger;           /* true on the frame an onset fires     */
 	float level;                  /* 0..1 overall level (RMS)             */
+
+	/* Frequency span the log-spaced `bars` cover, in Hz. bars[b] runs from
+	 * freq_min*(freq_max/freq_min)^(b/N) to the next step; lets effects pick
+	 * a custom band (e.g. a kick) out of the spectrum. */
+	float freq_min, freq_max;
 };
+
+/* Average the spectrum energy (0..1) the `bars` carry over [lo_hz, hi_hz].
+ * Returns 0 when the frame is invalid or the range is empty. */
+float bg_fft_band(const struct bg_audio_fft *fft, float lo_hz, float hi_hz);
 
 #ifdef __cplusplus
 }

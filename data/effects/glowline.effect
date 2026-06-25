@@ -1,0 +1,59 @@
+/* Glowing line/stroke shader for the line-art effects (magic circle, radial
+ * warp lines). Each quad is a thickened segment: TEXCOORD0.x is the signed
+ * cross-line coordinate where |x| <= 1 is the solid core and |x| up to `reach`
+ * is halo room. The core gets an antialiased fill; glow hugs the line and bloom
+ * spills wide, mirroring the analytical light in particle.effect. Per-vertex
+ * COLOR carries the (optionally tail-faded) line colour + alpha. Output is
+ * premultiplied alpha; the caller draws additive. */
+
+uniform float4x4 ViewProj;
+
+uniform float glow;     /* soft halo hugging the line   */
+uniform float bloom;    /* wide light spill             */
+uniform float emissive; /* core brightness boost        */
+uniform float reach;    /* quad half-width / core, also bloom falloff extent */
+
+struct VertData {
+	float4 pos   : POSITION;
+	float2 uv    : TEXCOORD0; /* (cross -reach..reach, along 0..1) */
+	float4 color : COLOR;
+};
+
+VertData VSLine(VertData v)
+{
+	VertData o;
+	o.pos = mul(float4(v.pos.xyz, 1.0), ViewProj);
+	o.uv = v.uv;
+	o.color = v.color;
+	return o;
+}
+
+float4 PSLine(VertData v) : TARGET
+{
+	float x = abs(v.uv.x); /* 0 centre, 1 core edge, up to reach at quad edge */
+
+	float aa = max(fwidth(v.uv.x), 1e-3);
+	float core = smoothstep(1.0 + aa, 1.0 - aa, x);
+
+	float rch = max(reach, 1.001);
+	float ghalo = pow(saturate(1.0 - x / (rch * 0.53)), 2.0);
+	float halo = pow(saturate(1.0 - x / rch), 3.0);
+
+	float a = core * v.color.a;
+	float lightA = (ghalo * glow * 0.6 + halo * bloom * 0.5) * v.color.a;
+
+	float3 rgb = v.color.rgb * (1.0 + emissive * 2.0) * a +
+		     v.color.rgb * (ghalo * glow * 1.2 + halo * bloom * 1.2) *
+			     v.color.a;
+	float outA = saturate(a + lightA);
+	return float4(rgb, outA);
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSLine(v);
+		pixel_shader  = PSLine(v);
+	}
+}

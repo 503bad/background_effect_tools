@@ -10,6 +10,8 @@ extern "C" {
 
 struct gs_effect;
 typedef struct gs_effect gs_effect_t;
+struct gs_texture;
+typedef struct gs_texture gs_texture_t;
 struct bg_post;
 struct bg_audio_mod;
 
@@ -20,6 +22,8 @@ enum bg_shape {
 	BG_SHAPE_CROSS = 2,  /* 4-point cross-filter sparkle  */
 	BG_SHAPE_STAR = 3,   /* 5-point star                  */
 	BG_SHAPE_PUFF = 4,   /* fbm-noise smoke puff          */
+	BG_SHAPE_BUBBLE = 5, /* translucent soap bubble       */
+	BG_SHAPE_IMAGE = 6,  /* sample sys->image texture     */
 };
 
 /* One CPU-managed billboard particle. Position/velocity are in canvas pixels
@@ -52,6 +56,12 @@ struct bg_particle_system {
 	float fade_in;       /* envelope ramp-in, fraction of life  (0..1) */
 	float fade_out;      /* envelope ramp-out, fraction of life (0..1) */
 	float flicker_speed; /* flicker cycles per second                */
+
+	/* Optional shader extras read by bg_particles_render: */
+	gs_texture_t *image; /* bound when shape == BG_SHAPE_IMAGE (else NULL) */
+	float gloss;         /* specular highlight strength for BG_SHAPE_BUBBLE */
+	float rim_width;     /* outline thickness (radius fraction) for bubbles */
+	float softness;      /* BG_SHAPE_CIRCLE edge blur, 0 crisp .. 1 soft    */
 };
 
 struct bg_particle_system *bg_particles_create(size_t capacity);
