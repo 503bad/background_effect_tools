@@ -11,7 +11,6 @@
 
 #include <obs-module.h>
 #include <graphics/graphics.h>
-#include <graphics/image-file.h>
 #include <util/bmem.h>
 
 #include <math.h>
@@ -50,7 +49,7 @@ struct img_state {
 	/* Image: loaded lazily under the graphics lock. */
 	char            *img_path;
 	char            *img_loaded;
-	gs_image_file_t  img;
+	gs_texture_t    *tex;
 	bool             has_img;
 };
 
@@ -71,8 +70,8 @@ static void img_destroy(void *data)
 	/* Graphics lock held by the host. */
 	if (s->sprite)
 		gs_effect_destroy(s->sprite);
-	if (s->has_img)
-		gs_image_file_free(&s->img);
+	if (s->tex)
+		gs_texture_destroy(s->tex);
 	bfree(s->img_path);
 	bfree(s->img_loaded);
 	bg_particles_destroy(s->sys);
@@ -234,18 +233,18 @@ static void img_sync_image(struct img_state *s)
 		     strcmp(s->img_path, s->img_loaded) == 0);
 	if (!same) {
 		if (s->has_img) {
-			gs_image_file_free(&s->img);
+			gs_texture_destroy(s->tex);
+			s->tex = NULL;
 			s->has_img = false;
 		}
 		if (s->img_path) {
-			gs_image_file_init(&s->img, s->img_path);
-			gs_image_file_init_texture(&s->img);
-			s->has_img = true;
+			s->tex = gs_texture_create_from_file(s->img_path);
+			s->has_img = s->tex != NULL;
 		}
 		bfree(s->img_loaded);
 		s->img_loaded = s->img_path ? bstrdup(s->img_path) : NULL;
 	}
-	s->sys->image = s->has_img ? s->img.texture : NULL;
+	s->sys->image = s->tex;
 }
 
 static void img_render(void *data, const struct bg_ctx *ctx)
