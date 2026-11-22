@@ -67,36 +67,43 @@ set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_nam
 # Emit exactly the tree we ship, with the "dist" install component:
 #   cmake --install <build> --config RelWithDebInfo --component dist --prefix package
 #
+# The plugin folder uses the OBS 33+ layout (flat module + data/), see
+# https://obsproject.com/kb/legacy-plugin-developer-info . install.bat copies
+# it to %ProgramData%\obs-studio\plugins\ (plus a bin\64bit copy of the DLL
+# so OBS 32 loads it too).
+#
 #   package/
-#   ├─ bin/
-#   │   └─ background-effect-tools.dll
 #   ├─ background-effect-tools/
-#   │   ├─ effects/*.effect
-#   │   └─ locale/*.ini
+#   │   ├─ background-effect-tools.dll
+#   │   ├─ background-effect-tools.pdb
+#   │   └─ data/
+#   │       ├─ effects/*.effect
+#   │       └─ locale/*.ini
+#   ├─ install.bat
 #   ├─ README.md
 #   ├─ LICENSE
 #   └─ SOURCE-NOTICE.txt
 install(
   TARGETS ${CMAKE_PROJECT_NAME}
-  LIBRARY DESTINATION bin COMPONENT dist
-  RUNTIME DESTINATION bin COMPONENT dist
+  LIBRARY DESTINATION ${CMAKE_PROJECT_NAME} COMPONENT dist
+  RUNTIME DESTINATION ${CMAKE_PROJECT_NAME} COMPONENT dist
 )
 if(MSVC)
   install(
     FILES "$<TARGET_PDB_FILE:${CMAKE_PROJECT_NAME}>"
-    DESTINATION bin
+    DESTINATION ${CMAKE_PROJECT_NAME}
     COMPONENT dist
     OPTIONAL
   )
 endif()
 install(
   DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/data/effects"
-  DESTINATION ${CMAKE_PROJECT_NAME}
+  DESTINATION ${CMAKE_PROJECT_NAME}/data
   COMPONENT dist
 )
 install(
   DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/data/locale"
-  DESTINATION ${CMAKE_PROJECT_NAME}
+  DESTINATION ${CMAKE_PROJECT_NAME}/data
   COMPONENT dist
 )
 install(

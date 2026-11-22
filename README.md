@@ -1,17 +1,57 @@
 # Background Effect Tools
 
+> **📥 最新版のダウンロード：[release.zip（Windows x64）](https://github.com/503bad/background_effect_tools/releases/latest/download/release.zip)**
+> ／ [リリースページ（更新内容）](https://github.com/503bad/background_effect_tools/releases/latest)
+>
+> 展開した `install.bat` をダブルクリックするとインストールできます（詳しくは「[OBS へのインストール](#obs-へのインストール)」）。
+
 OBS Studio 用の背景エフェクト・ソースプラグインです。1つのソース「背景エフェクト
 (Background Effects)」を追加し、プロパティでエフェクト種別を切り替えて使用します。
 
 
 ## OBS へのインストール
-OBSを終了した状態で以下のファイルを OBS のインストール先に配置してください:
 
-- `bin/` 配下のファイルすべて → `<obs>/obs-plugins/64bit/` 配下へ
-- `background-effect-tools/` フォルダ → `<obs>/data/obs-plugins/` 配下へフォルダごとコピー
+### インストーラーを使う（推奨）
 
-（`<obs>` は OBS のインストール先。例: `C:\Program Files\obs-studio`。）配置後は
-OBS を完全に再起動してください。
+1. OBS を完全に終了します。
+2. ZIP をすべて展開し、`install.bat` を**ダブルクリック**します。管理者権限の確認（UAC）が出たら「はい」を選ぶと、新しいウィンドウでインストールが進みます。
+
+`install.bat` は次のことを自動で行います。
+
+- `C:\ProgramData\obs-studio\plugins\background-effect-tools\` に、DLL を
+  **OBS 33 以降の置き方と OBS 32 以前の置き方の両方**で配置します。OBS のバージョンに
+  関係なく読み込まれ、32 から 33 へ更新したあともそのまま使えます
+  （OBS 33 は新しい置き方を先に読み込み、もう一方は読み飛ばします）。
+  - `...\background-effect-tools\background-effect-tools.dll`（OBS 33 以降）
+  - `...\background-effect-tools\bin\64bit\background-effect-tools.dll`（OBS 32 以前）
+  - `...\background-effect-tools\data\`
+- OBS の場所（レジストリ → `C:\Program Files\obs-studio`）は、古いコピーの削除と
+  ポータブル版の判定にだけ使います。見つからなくてもインストールは続けます。
+  - **ポータブル版 OBS 33 以降**は `install.bat "D:\Apps\obs-studio"` のように
+    OBS のフォルダを指定してください（`<OBS のフォルダ>\plugins\background-effect-tools\` に入ります。
+    ポータブル版 OBS 32 以前はインストーラーの対象外です）。
+- 以前のバージョンが旧方式の場所（`<OBS>\obs-plugins\64bit\` と
+  `<OBS>\data\obs-plugins\background-effect-tools\`）にあれば削除します。
+  旧方式の場所は OBS 34 以降で読み込まれなくなる予定です。
+- 以前のバージョンの不要なファイル（古いエフェクトなど）も削除します。
+
+インストールのたびに、`install.bat` と同じフォルダへ `install-log.txt`（見つけた OBS・
+インストール先・PC にあるプラグインの DLL の一覧）を書き出します。うまく動かないときは
+このファイルと OBS のログを添えてお知らせください。`install.bat /check` を実行すると、
+何も変更せずにインストール先などを画面に表示します（管理者権限は不要です）。
+
+### 手動でインストールする
+
+OBS を終了し、ZIP の中の `background-effect-tools` フォルダを次の場所にフォルダごと
+コピーします。フォルダ名は必ず `background-effect-tools`（DLL のベース名と一致）にします。
+
+- `C:\ProgramData\obs-studio\plugins\` の中へそのままコピーし、さらに
+  `background-effect-tools.dll` と `background-effect-tools.pdb` を `background-effect-tools\bin\64bit\`
+  にもコピーします（両方に置くと OBS 32 / 33 のどちらでも読み込まれます）
+
+以前に `C:\Program Files\obs-studio\obs-plugins\64bit\background-effect-tools.dll` と
+`C:\Program Files\obs-studio\data\obs-plugins\background-effect-tools\` に入れていた
+場合は、それらを削除してください。
 
 ## エフェクト一覧
 
@@ -47,7 +87,7 @@ OBS を完全に再起動してください。
 Visual Studio 2022 + CMake 3.28 以降が必要です。
 
 ```bat
-build.bat        REM インクリメンタルビルド + package\ へステージ
+build.bat        REM インクリメンタルビルド + package\ へステージ + OBS へ配置
 build.bat clean  REM フルリビルド
 ```
 
@@ -55,15 +95,19 @@ build.bat clean  REM フルリビルド
 
 ```
 package/
-├─ bin/background-effect-tools.dll
 ├─ background-effect-tools/
-│   ├─ effects/*.effect
-│   └─ locale/*.ini
+│   ├─ background-effect-tools.dll
+│   ├─ background-effect-tools.pdb
+│   └─ data/
+│       ├─ effects/*.effect
+│       └─ locale/*.ini
+├─ install.bat
 ├─ README.md / LICENSE / SOURCE-NOTICE.txt
 ```
 
-`bin\background-effect-tools.dll` を OBS の `obs-plugins\64bit\` に、
-`background-effect-tools\` フォルダを `data\obs-plugins\` に配置してください。
+OBS への配置は最後に `package\install.bat` が行います（配布物と同じインストーラー）。
+`C:\ProgramData\obs-studio\plugins\` に書き込むため、管理者権限のコマンドプロンプトから
+実行してください。
 
 ## ライセンス
 

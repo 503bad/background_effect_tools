@@ -3,16 +3,17 @@ REM ============================================================================
 REM  build.bat - Configure, build, and stage background-effect-tools into package\
 REM
 REM  Output layout (package\):
-REM    package\bin\background-effect-tools.dll        plugin binary
-REM    package\bin\background-effect-tools.pdb        debug symbols
-REM    package\background-effect-tools\effects\*.effect
-REM    package\background-effect-tools\locale\*.ini
-REM    package\README.md / LICENSE / SOURCE-NOTICE.txt  (release docs)
+REM    package\background-effect-tools\background-effect-tools.dll   plugin binary
+REM    package\background-effect-tools\background-effect-tools.pdb   debug symbols
+REM    package\background-effect-tools\data\effects\*.effect
+REM    package\background-effect-tools\data\locale\*.ini
+REM    package\install.bat / README.md / LICENSE / SOURCE-NOTICE.txt
 REM
-REM  After staging, the plugin is also deployed into the local OBS install:
-REM    package\background-effect-tools\  -> %OBS_DIR%\data\obs-plugins\background-effect-tools\
-REM    package\bin\*                     -> %OBS_DIR%\obs-plugins\64bit\
-REM  (Deploying into "Program Files" needs an elevated/admin command prompt.)
+REM  After staging, the plugin is deployed into the local OBS by running
+REM  package\install.bat (the same installer users get): legacy copies in
+REM  Program Files are removed and the plugin goes to
+REM  %ProgramData%\obs-studio\plugins\background-effect-tools\ .
+REM  (Needs an elevated/admin command prompt, and OBS must be closed.)
 REM
 REM  Usage:
 REM    build.bat            Build (incremental), refresh package\, deploy to OBS
@@ -27,11 +28,6 @@ set PRESET=local
 set BUILD_DIR=build_x64
 set CONFIG=RelWithDebInfo
 set PKG_DIR=package
-
-REM OBS install root + the two deploy targets under it.
-set OBS_DIR=C:\Program Files\obs-studio
-set OBS_DATA_DIR=%OBS_DIR%\data\obs-plugins\background-effect-tools
-set OBS_BIN_DIR=%OBS_DIR%\obs-plugins\64bit
 
 if /i "%~1"=="clean" (
     echo [clean] Removing %BUILD_DIR%\ and %PKG_DIR%\ ...
@@ -60,39 +56,10 @@ cmake --install "%BUILD_DIR%" --config %CONFIG% --component dist --prefix "%PKG_
 if errorlevel 1 goto :error
 
 echo.
-echo === [5/5] Deploy into OBS (%OBS_DIR%) ===
-if not exist "%OBS_DIR%" (
-    echo [warn] OBS not found at "%OBS_DIR%" - skipping deploy.
-    echo        Edit OBS_DIR at the top of build.bat if your install differs.
-    goto :done
-)
+echo === [5/5] Deploy into OBS (package\install.bat) ===
+call "%PKG_DIR%\install.bat" /nopause
+if errorlevel 1 goto :deploy_error
 
-REM Writing under "Program Files" needs elevation. robocopy unhelpfully returns
-REM exit code 0 on access-denied, so gate on an explicit admin check instead.
-net session >nul 2>&1
-if errorlevel 1 (
-    echo [error] Administrator privileges are required to deploy into:
-    echo           "%OBS_DIR%"
-    echo         Re-run build.bat from a command prompt opened with
-    echo         "Run as administrator", and close OBS first.
-    goto :deploy_error
-)
-
-REM --- data files: mirror the dedicated plugin folder (prunes stale locales) ---
-echo   data -^> "%OBS_DATA_DIR%"
-robocopy "%PKG_DIR%\background-effect-tools" "%OBS_DATA_DIR%" /MIR /R:1 /W:1 /NJH /NJS /NDL /NP
-if errorlevel 8 goto :deploy_error
-
-REM --- binaries: copy only our files (64bit\ is shared with other plugins) ---
-echo   bin  -^> "%OBS_BIN_DIR%"
-robocopy "%PKG_DIR%\bin" "%OBS_BIN_DIR%" background-effect-tools.dll background-effect-tools.pdb /R:1 /W:1 /NJH /NJS /NDL /NP
-if errorlevel 8 goto :deploy_error
-
-REM Verify the copies actually landed (robocopy's exit code can't be trusted).
-if not exist "%OBS_BIN_DIR%\background-effect-tools.dll"  goto :deploy_error
-if not exist "%OBS_DATA_DIR%\locale\ja-JP.ini"            goto :deploy_error
-
-:done
 echo.
 echo === Done. Staged tree: ===
 dir /s /b "%PKG_DIR%"
@@ -104,9 +71,8 @@ exit /b 0
 :deploy_error
 echo.
 echo *** DEPLOY FAILED ***
-echo     Could not copy into "%OBS_DIR%".
-echo     Run this script from an Administrator command prompt (Program Files
-echo     is write-protected), and make sure OBS is closed.
+echo     See the installer messages above. Run build.bat from an
+echo     Administrator command prompt, and make sure OBS is closed.
 endlocal
 exit /b 1
 
