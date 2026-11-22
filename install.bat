@@ -131,13 +131,13 @@ set "LEGACY_DLL=%OBS_DIR%\obs-plugins\64bit\%PLUGIN%.dll"
 set "LEGACY_PDB=%OBS_DIR%\obs-plugins\64bit\%PLUGIN%.pdb"
 set "LEGACY_DATA=%OBS_DIR%\data\obs-plugins\%PLUGIN%"
 
-echo   OBS folder   : %OBS_DIR%  ^(from %OBS_FROM%^)
+echo   OBS folder   : "%OBS_DIR%"  ^(from %OBS_FROM%^)
 echo   OBS version  : %OBS_VERSION%  portable=%PORTABLE%
-echo   Install to   : %DEST%  ^(layout %LAYOUT%^)
+echo   Install to   : "%DEST%"  ^(layout %LAYOUT%^)
 set "HAS_LEGACY=0"
-if exist "%LEGACY_DLL%"  (echo   Legacy copy  : %LEGACY_DLL%  ^(will be removed^)  & set "HAS_LEGACY=1")
-if exist "%LEGACY_PDB%"  (echo   Legacy copy  : %LEGACY_PDB%  ^(will be removed^)  & set "HAS_LEGACY=1")
-if exist "%LEGACY_DATA%" (echo   Legacy copy  : %LEGACY_DATA%\  ^(will be removed^) & set "HAS_LEGACY=1")
+if exist "%LEGACY_DLL%"  (echo   Legacy copy  : "%LEGACY_DLL%"  ^(will be removed^)  & set "HAS_LEGACY=1")
+if exist "%LEGACY_PDB%"  (echo   Legacy copy  : "%LEGACY_PDB%"  ^(will be removed^)  & set "HAS_LEGACY=1")
+if exist "%LEGACY_DATA%" (echo   Legacy copy  : "%LEGACY_DATA%\"  ^(will be removed^) & set "HAS_LEGACY=1")
 if "%HAS_LEGACY%"=="0" echo   Legacy copy  : none
 
 REM --- 3. OBS must be closed -----------------------------------------------
@@ -173,7 +173,8 @@ echo The installation continues in a new window.
 set "SELF=%~f0"
 set "SELF_ARG="
 if "%OBS_FROM%"=="argument" set "SELF_ARG=%OBS_DIR%"
-powershell -NoProfile -Command "$a = @('/elevated'); if ($env:SELF_ARG) { $a += ('\"' + $env:SELF_ARG + '\"') }; try { Start-Process -FilePath $env:SELF -ArgumentList $a -Verb RunAs -ErrorAction Stop; exit 0 } catch { exit 1 }"
+REM cmd /c ""script" args" keeps paths with spaces, ( ) or & intact.
+powershell -NoProfile -Command "$q = [char]34; $arg = '/elevated'; if ($env:SELF_ARG) { $arg += ' ' + $q + $env:SELF_ARG + $q }; $cl = '/c ' + $q + $q + $env:SELF + $q + ' ' + $arg + $q; try { Start-Process -FilePath $env:ComSpec -ArgumentList $cl -Verb RunAs -ErrorAction Stop; exit 0 } catch { exit 1 }"
 if errorlevel 1 (
     echo [error] Administrator rights were not granted ^(UAC was cancelled^).
     goto :need_admin
@@ -225,8 +226,8 @@ if "%HAS_LEGACY%"=="1" (
 ) else (
     echo   Removed      : nothing ^(no old copies found^)
 )
-echo   Installed to : %DEST%
-echo   Log          : %LOGFILE%
+echo   Installed to : "%DEST%"
+echo   Log          : "%LOGFILE%"
 echo.
 echo   Start OBS and add "Background Effects" from Add Source.
 echo ============================================================
@@ -266,10 +267,10 @@ REM ---------------------------------------------------------------------------
     echo %PLUGIN% installer - %~1
     echo date         : %DATE% %TIME%
     echo windows      : %OS% %PROCESSOR_ARCHITECTURE%
-    echo package      : %SRC%
-    echo OBS folder   : %OBS_DIR%  ^(from %OBS_FROM%^)
+    echo package      : "%SRC%"
+    echo OBS folder   : "%OBS_DIR%"  ^(from %OBS_FROM%^)
     echo OBS version  : %OBS_VERSION%  portable=%PORTABLE%
-    echo install to   : %DEST%  ^(layout %LAYOUT%^)
+    echo install to   : "%DEST%"  ^(layout %LAYOUT%^)
     echo.
     echo --- plugin files now present ---
 ) 2>nul
